@@ -1,0 +1,8 @@
+*.png binary
+*.webp binary
+*.icns binary
+*.wav binary
+*.swift text eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf

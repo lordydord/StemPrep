@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#111315">
+  <title>StemPrep - Stem separation for macOS</title>
+  <meta name="description" content="A native macOS app that sends a WAV to MVSEP and saves every returned stem beside the source track.">
+  <link rel="canonical" href="https://lordydord.github.io/StemPrep/">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <meta property="og:title" content="StemPrep - Stem separation for macOS">
+  <meta property="og:description" content="Drop a WAV, choose an MVSEP model, and collect every stem beside the source track.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://lordydord.github.io/StemPrep/">
+  <meta property="og:image" content="https://lordydord.github.io/StemPrep/assets/stemprep-app.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preload" as="image" href="assets/hero.webp" type="image/webp" fetchpriority="high">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Primary navigation">
+      <a class="brand" href="#top" aria-label="StemPrep home">
+        <img src="assets/favicon.png" width="36" height="36" alt="">
+        <span>StemPrep</span>
+      </a>
+
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="nav-links">Menu</button>
+
+      <div class="nav-links" id="nav-links">
+        <a href="#workflow">How it works</a>
+        <a href="#privacy">Privacy</a>
+        <a href="https://github.com/lordydord/StemPrep">View source</a>
+        <button class="theme-toggle" type="button" aria-label="Change color theme">Light mode</button>
+        <a class="button button-small" href="https://github.com/lordydord/StemPrep/releases/latest">Download for Mac</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <img class="hero-art" src="assets/hero.webp" alt="" width="1672" height="941" fetchpriority="high">
+      <div class="shell hero-grid">
+        <div class="hero-copy reveal">
+          <p class="eyebrow">Open-source stem separation for macOS</p>
+          <h1>Every stem.<br>Beside the source.</h1>
+          <p class="hero-summary">Drop a WAV, choose an MVSEP model, and collect every returned part in one tidy folder.</p>
+          <div class="hero-actions">
+            <a class="button" href="https://github.com/lordydord/StemPrep/releases/latest">Download for Mac</a>
+            <a class="text-link" href="https://github.com/lordydord/StemPrep">View source <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="proof-strip" aria-label="Compatibility">
+      <div class="shell proof-grid">
+        <p><strong>Native</strong><span>Built with SwiftUI</span></p>
+        <p><strong>Universal</strong><span>Intel and Apple silicon</span></p>
+        <p><strong>Private</strong><span>Token secured in Keychain</span></p>
+        <p><strong>Direct</strong><span>Your Mac to MVSEP</span></p>
+      </div>
+    </div>
+
+    <section class="product section shell">
+      <div class="section-heading reveal">
+        <h2>A focused studio utility.</h2>
+        <p>StemPrep keeps the source, model, progress and finished files visible without turning separation into a technical job.</p>
+      </div>
+      <figure class="app-frame reveal">
+        <img src="assets/app.webp" width="2252" height="1596" alt="StemPrep for macOS showing its first-run MVSEP setup panel" loading="lazy">
+      </figure>
+    </section>
+
+    <section class="workflow section" id="workflow">
+      <div class="shell">
+        <div class="section-heading reveal">
+          <h2>From track to stems.</h2>
+          <p>Three clear actions, with recovery built in for the parts that take time.</p>
+        </div>
+
+        <div class="workflow-list">
+          <article class="workflow-item reveal">
+            <h3>Drop</h3>
+            <p>Choose one WAV. StemPrep fingerprints the source before it sends anything.</p>
+            <span>Source WAV</span>
+          </article>
+          <article class="workflow-item reveal">
+            <h3>Choose</h3>
+            <p>Pick from the live MVSEP model catalogue and select WAV, FLAC or MP3 delivery.</p>
+            <span>Exact model settings</span>
+          </article>
+          <article class="workflow-item reveal">
+            <h3>Collect</h3>
+            <p>Every returned stem lands beside the source with a manifest and an original copy.</p>
+            <span>One sibling folder</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="features section shell">
+      <div class="section-heading reveal">
+        <h2>Built for real separation jobs.</h2>
+        <p>Long uploads, remote queues and interrupted sessions are treated as normal, recoverable states.</p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature feature-wide reveal">
+          <div>
+            <h3>Resume without uploading twice</h3>
+            <p>Accepted MVSEP jobs remain recoverable after the app closes or the network drops.</p>
+          </div>
+          <div class="signal-lines" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        </article>
+        <article class="feature reveal">
+          <h3>Stream the source</h3>
+          <p>The upload body reads from the WAV instead of building another full-size package first.</p>
+        </article>
+        <article class="feature feature-accent reveal">
+          <h3>Avoid repeat charges</h3>
+          <p>A source and settings fingerprint can reopen a completed match instead of creating another job.</p>
+        </article>
+        <article class="feature feature-icon reveal">
+          <img src="assets/icon.webp" width="1024" height="1024" alt="StemPrep app icon" loading="lazy">
+          <div>
+            <h3>Native from the Dock</h3>
+            <p>Universal SwiftUI app for Intel and Apple silicon Macs.</p>
+          </div>
+        </article>
+        <article class="feature reveal">
+          <h3>Keep every output</h3>
+          <p>Variable MVSEP results are preserved and named cleanly, not forced into a fixed four-stem layout.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="privacy section" id="privacy">
+      <div class="shell privacy-grid">
+        <div class="privacy-art reveal">
+          <img src="assets/icon.webp" width="1024" height="1024" alt="" loading="lazy">
+        </div>
+        <div class="privacy-copy reveal">
+          <h2>Your token stays on your Mac.</h2>
+          <p>StemPrep has no analytics, ads or developer-operated server. Your API token is stored in macOS Keychain.</p>
+          <p>When you start a job, the WAV and selected settings go directly to MVSEP. Their privacy policy governs that processing.</p>
+          <a class="text-link" href="https://github.com/lordydord/StemPrep/blob/main/PRIVACY.md">Read the privacy details <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="setup section shell">
+      <div class="setup-grid">
+        <div class="setup-copy reveal">
+          <h2>First run makes the connection clear.</h2>
+          <p>StemPrep points to MVSEP's Full API page, explains where to find the token, then saves it securely.</p>
+          <a class="text-link" href="https://mvsep.com/en/full_api">Open MVSEP API setup <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="setup-window reveal">
+          <img src="assets/app.webp" width="2252" height="1596" alt="StemPrep first-run setup with MVSEP account and API token instructions" loading="lazy">
+        </div>
+      </div>
+    </section>
+
+    <section class="faq section shell">
+      <div class="section-heading reveal">
+        <h2>Before you download.</h2>
+        <p>The practical details for the first public release.</p>
+      </div>
+
+      <div class="faq-list reveal">
+        <details>
+          <summary>Does StemPrep separate audio locally?</summary>
+          <p>No. The macOS app sends the chosen WAV directly to MVSEP and downloads the returned stems.</p>
+        </details>
+        <details>
+          <summary>Do I need a paid MVSEP account?</summary>
+          <p>You need an MVSEP account and API token. Queue priority, limits and available exports depend on your MVSEP plan.</p>
+        </details>
+        <details>
+          <summary>Where are finished files saved?</summary>
+          <p>In a new folder beside the source WAV, named after the track with “Stems” appended.</p>
+        </details>
+        <details>
+          <summary>Is the app signed and notarized?</summary>
+          <p>Version 1.0 is ad-hoc signed but not notarized with an Apple Developer ID. Right-click the app and choose Open if macOS asks for confirmation.</p>
+        </details>
+        <details>
+          <summary>Can I inspect or build it myself?</summary>
+          <p>Yes. The complete Swift source, tests and build scripts are available under the MIT license.</p>
+        </details>
+      </div>
+    </section>
+
+    <section class="download section">
+      <div class="shell download-inner reveal">
+        <img src="assets/icon.webp" width="180" height="180" alt="" loading="lazy">
+        <div>
+          <h2>Ready for the next split.</h2>
+          <p>Open source, universal and designed for macOS 14 or newer.</p>
+        </div>
+        <a class="button" href="https://github.com/lordydord/StemPrep/releases/latest">Download for Mac</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <p>StemPrep is an independent project. It is not affiliated with MVSEP or Ableton.</p>
+      <div>
+        <a href="https://github.com/lordydord/StemPrep">View source</a>
+        <a href="https://github.com/lordydord/StemPrep/blob/main/LICENSE">MIT License</a>
+        <a href="https://github.com/lordydord/StemPrep/issues">Issues</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
