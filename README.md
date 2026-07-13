@@ -7,9 +7,13 @@ StemPrep is a native macOS app that sends a WAV to [MVSEP](https://mvsep.com/en)
 ## Highlights
 
 - Live MVSEP model catalogue with the exact selected `render_id`
+- Live queue position and real chunk progress inside the source waveform
+- Model availability, credit estimates and supported advanced options
 - WAV, FLAC and MP3 delivery options
-- Streamed uploads without creating a second full-size upload copy
-- Resumable job tracking and background downloads
+- File-backed uploads avoid holding the full WAV in memory and remove their temporary staging file after submission
+- Resumable job tracking, MVSEP history and finished-job re-downloads
+- Queued-job cancellation through MVSEP when a refund is available
+- Private account status for balance, premium use and active jobs
 - Duplicate-render detection to avoid repeating paid jobs
 - Output folders created beside the source track
 - API token stored in macOS Keychain
@@ -24,12 +28,12 @@ StemPrep is a native macOS app that sends a WAV to [MVSEP](https://mvsep.com/en)
 
 ## Install
 
-1. Download `StemPrep-v1.0.0.zip` from the [latest release](https://github.com/lordydord/StemPrep/releases/latest).
+1. Download `StemPrep-v1.1.0.zip` from the [latest release](https://github.com/lordydord/StemPrep/releases/latest).
 2. Unzip it and move `StemPrep.app` to Applications.
 3. Open StemPrep. If macOS asks for confirmation, right-click the app and choose **Open**.
 4. Follow the first-run guide to create or sign in to an MVSEP account and save your API token.
 
-StemPrep v1.0 is ad-hoc signed and is not notarized with an Apple Developer ID. The source is available here for inspection and local builds.
+StemPrep v1.1 is ad-hoc signed and is not notarized with an Apple Developer ID. The source is available here for inspection and local builds.
 
 ## How it works
 
@@ -42,7 +46,7 @@ Your audio is uploaded directly to MVSEP. StemPrep does not proxy it through ano
 
 ## API token
 
-Open the [MVSEP Full API page](https://mvsep.com/en/full_api), create an account or sign in, then copy the API token shown on that page. StemPrep stores the token in macOS Keychain and uses it only for requests to MVSEP.
+Open the [MVSEP User API page](https://mvsep.com/user-api), create an account or sign in, then copy the API token shown on that page. StemPrep stores the token in macOS Keychain and uses it only for requests to MVSEP.
 
 ## Build from source
 
@@ -78,7 +82,7 @@ The private `.env` file is ignored by Git. Never commit a real API token.
 
 ## Project status
 
-Version 1.0 is the first public release. Bug reports and focused pull requests are welcome through [GitHub Issues](https://github.com/lordydord/StemPrep/issues).
+Version 1.1 adds truthful remote progress, account and credit context, advanced model options, MVSEP history, re-downloads and queued-job cancellation. Bug reports and focused pull requests are welcome through [GitHub Issues](https://github.com/lordydord/StemPrep/issues).
 
 StemPrep is an independent open-source project and is not affiliated with MVSEP or Ableton.
 

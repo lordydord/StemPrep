@@ -33,85 +33,47 @@ struct MultipartBodyDescriptor: Sendable {
         self.contentLength = Int64(prefix.count) + Int64(fileSize) + Int64(suffix.count)
     }
 
-    func makeInputStream() -> InputStream {
-        MultipartInputStream(parts: [
-            InputStream(data: prefix),
-            InputStream(url: fileURL) ?? InputStream(data: Data()),
-            InputStream(data: suffix)
-        ])
-    }
-}
-
-private final class MultipartInputStream: InputStream {
-    private let parts: [InputStream]
-    private var partIndex = 0
-    private var currentStatus: Stream.Status = .notOpen
-    private var currentError: Error?
-
-    init(parts: [InputStream]) {
-        self.parts = parts
-        super.init(data: Data())
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override func open() {
-        guard currentStatus == .notOpen else { return }
-        currentStatus = .open
-        parts.first?.open()
-    }
-
-    override func close() {
-        parts.forEach { $0.close() }
-        currentStatus = .closed
-    }
-
-    override var streamStatus: Stream.Status {
-        currentStatus
-    }
-
-    override var streamError: Error? {
-        currentError
-    }
-
-    override var hasBytesAvailable: Bool {
-        currentStatus == .open && partIndex < parts.count
-    }
-
-    override func read(_ buffer: UnsafeMutablePointer<UInt8>, maxLength len: Int) -> Int {
-        guard currentStatus == .open else { return 0 }
-
-        while partIndex < parts.count {
-            let count = parts[partIndex].read(buffer, maxLength: len)
-            if count > 0 { return count }
-            if count < 0 {
-                currentError = parts[partIndex].streamError
-                currentStatus = .error
-                return -1
-            }
-
-            parts[partIndex].close()
-            partIndex += 1
-            if partIndex < parts.count {
-                parts[partIndex].open()
-            }
+    func makeTemporaryUploadFile(
+        in directory: URL = FileManager.default.temporaryDirectory
+    ) throws -> URL {
+        let manager = FileManager.default
+        let uploadURL = directory.appendingPathComponent("StemPrepUpload-\(UUID().uuidString).multipart")
+        guard manager.createFile(
+            atPath: uploadURL.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ) else {
+            throw CocoaError(.fileWriteUnknown)
         }
 
-        currentStatus = .atEnd
-        return 0
-    }
+        do {
+            let output = try FileHandle(forWritingTo: uploadURL)
+            defer { try? output.close() }
 
-    override func getBuffer(
-        _ buffer: UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>,
-        length len: UnsafeMutablePointer<Int>
-    ) -> Bool {
-        false
+            try output.write(contentsOf: prefix)
+            let input = try FileHandle(forReadingFrom: fileURL)
+            defer { try? input.close() }
+
+            while let chunk = try input.read(upToCount: 1024 * 1024), !chunk.isEmpty {
+                try output.write(contentsOf: chunk)
+            }
+
+            try output.write(contentsOf: suffix)
+            try output.synchronize()
+
+            let stagedSize = try uploadURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard Int64(stagedSize) == contentLength else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            return uploadURL
+        } catch {
+            try? manager.removeItem(at: uploadURL)
+            throw error
+        }
     }
 }
 
-final class StreamedUploadWorker: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, @unchecked Sendable {
+final class FileBackedUploadWorker: NSObject, URLSessionDataDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     private let descriptor: MultipartBodyDescriptor
     private let configuration: URLSessionConfiguration
     private let onProgress: @MainActor (Double) -> Void
@@ -133,10 +95,12 @@ final class StreamedUploadWorker: NSObject, URLSessionDataDelegate, URLSessionTa
     }
 
     func upload(request originalRequest: URLRequest) async throws -> (Data, URLResponse) {
-        try await withTaskCancellationHandler {
+        let uploadFileURL = try descriptor.makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: uploadFileURL) }
+
+        return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 var request = originalRequest
-                request.httpBodyStream = descriptor.makeInputStream()
                 request.setValue(String(descriptor.contentLength), forHTTPHeaderField: "Content-Length")
 
                 let configuration = self.configuration.copy() as! URLSessionConfiguration
@@ -146,7 +110,7 @@ final class StreamedUploadWorker: NSObject, URLSessionDataDelegate, URLSessionTa
                 let queue = OperationQueue()
                 queue.maxConcurrentOperationCount = 1
                 let session = URLSession(configuration: configuration, delegate: self, delegateQueue: queue)
-                let task = session.uploadTask(withStreamedRequest: request)
+                let task = session.uploadTask(with: request, fromFile: uploadFileURL)
 
                 lock.lock()
                 self.continuation = continuation
@@ -165,14 +129,6 @@ final class StreamedUploadWorker: NSObject, URLSessionDataDelegate, URLSessionTa
         let task = self.task
         lock.unlock()
         task?.cancel()
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        task: URLSessionTask,
-        needNewBodyStream completionHandler: @escaping (InputStream?) -> Void
-    ) {
-        completionHandler(descriptor.makeInputStream())
     }
 
     func urlSession(

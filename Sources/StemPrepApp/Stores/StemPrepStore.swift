@@ -14,7 +14,13 @@ final class StemPrepStore: ObservableObject {
     @Published var outputFormat: MvsepOutputFormat
     @Published var algorithms: [MvsepAlgorithm] = [.fallback]
     @Published var selectedRenderID: Int
+    @Published private(set) var algorithmOptions: [String: String] = [:]
     @Published var algorithmLoadStatus: String?
+    @Published private(set) var accountState: MvsepAccountState = .notConfigured
+    @Published private(set) var remoteHistory: [MvsepHistoryItem] = []
+    @Published private(set) var remoteHistoryLoadStatus: String?
+    @Published private(set) var isCancellingRemoteJob = false
+    @Published var remoteActionError: String?
     @Published var runStartedAt: Date?
     @Published private(set) var resumableJob: ResumableStemJob?
 
@@ -61,6 +67,7 @@ final class StemPrepStore: ObservableObject {
         self.completedJobRecords = history
         self.recentJobs = Array(history.prefix(8)).map(\.recentJob)
         try? historyStore.save(history)
+        synchronizeAlgorithmOptions()
     }
 
     var selectedAlgorithm: MvsepAlgorithm {
@@ -69,6 +76,22 @@ final class StemPrepStore: ObservableObject {
 
     var hasResumableJob: Bool {
         resumableJob != nil
+    }
+
+    var effectiveAlgorithmOptions: [String: String] {
+        var values = selectedAlgorithm.defaults
+        values.merge(algorithmOptions) { _, selected in selected }
+        return values
+    }
+
+    var estimatedCredits: Int? {
+        selectedAlgorithm.estimatedCredits(for: selectedFileInfo?.durationSeconds)
+    }
+
+    var canCancelRemoteJob: Bool {
+        guard !isCancellingRemoteJob, resumableJob != nil else { return false }
+        guard case .queued(let progress) = status else { return false }
+        return progress.stage == .waiting
     }
 
     func refreshPreferences(includeModelSelection: Bool = true) {
@@ -94,6 +117,64 @@ final class StemPrepStore: ObservableObject {
         }
         UserDefaults.standard.removeObject(forKey: "mvsepApiToken")
         apiToken = trimmed
+        refreshMVSEPData()
+    }
+
+    func refreshMVSEPData() {
+        let token = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            accountState = .notConfigured
+            remoteHistory = []
+            remoteHistoryLoadStatus = nil
+            return
+        }
+
+        accountState = .checking
+        remoteHistoryLoadStatus = "SYNCING"
+        Task { [weak self] in
+            guard let self else { return }
+
+            do {
+                let account = try await mvsep.fetchAccount(apiToken: token)
+                guard apiToken == token else { return }
+                accountState = .connected(account)
+            } catch {
+                guard apiToken == token else { return }
+                if case .mvsepRejected = error as? StemPrepError {
+                    accountState = .invalid("Check the saved MVSEP token.")
+                } else {
+                    accountState = .unavailable("MVSEP account data is temporarily unavailable.")
+                }
+            }
+
+            do {
+                let history = try await mvsep.fetchSeparationHistory(apiToken: token, limit: 10)
+                guard apiToken == token else { return }
+                remoteHistory = history
+                remoteHistoryLoadStatus = nil
+            } catch {
+                guard apiToken == token else { return }
+                remoteHistoryLoadStatus = "UNAVAILABLE"
+            }
+        }
+    }
+
+    func modelSelectionDidChange() {
+        UserDefaults.standard.set(selectedRenderID, forKey: "mvsepRenderID")
+        synchronizeAlgorithmOptions()
+    }
+
+    func algorithmOptionValue(for field: MvsepAlgorithm.Field) -> String {
+        algorithmOptions[field.name] ?? field.defaultValue ?? field.choices.first?.key ?? ""
+    }
+
+    func setAlgorithmOption(_ value: String, for field: MvsepAlgorithm.Field) {
+        guard field.choices.contains(where: { $0.key == value }) else { return }
+        algorithmOptions[field.name] = value
+        UserDefaults.standard.set(
+            algorithmOptions,
+            forKey: "mvsepAlgorithmOptions.\(selectedRenderID)"
+        )
     }
 
     func loadAlgorithms() {
@@ -111,6 +192,7 @@ final class StemPrepStore: ObservableObject {
                     selectedRenderID = algorithms.first { $0.renderID == MvsepAlgorithm.fallback.renderID }?.renderID
                         ?? algorithms[0].renderID
                 }
+                synchronizeAlgorithmOptions()
             } catch {
                 // The cached catalogue is already visible. If no cache exists,
                 // the built-in ensemble model remains available.
@@ -166,6 +248,7 @@ final class StemPrepStore: ObservableObject {
         runStartedAt = Date()
         let algorithm = selectedAlgorithm
         let selectedFormat = outputFormat
+        let submittedOptions = effectiveAlgorithmOptions
         let startedAt = runStartedAt ?? Date()
 
         startTrackedTask { [weak self] in
@@ -176,7 +259,8 @@ final class StemPrepStore: ObservableObject {
                 let separationKey = AudioFingerprint.separationKey(
                     sourceFingerprint: sourceFingerprint,
                     renderID: algorithm.renderID,
-                    outputFormat: selectedFormat
+                    outputFormat: selectedFormat,
+                    algorithmOptions: submittedOptions == algorithm.defaults ? [:] : submittedOptions
                 )
                 if restoreExistingResult(for: separationKey) {
                     return
@@ -187,22 +271,25 @@ final class StemPrepStore: ObservableObject {
                 let sourceName = FileNaming.safeTrackName(from: source)
 
                 status = .uploading(0)
-                let hash = try await mvsep.createSeparation(
+                let created = try await mvsep.createSeparation(
                     audioURL: source,
                     apiToken: token,
                     algorithm: algorithm,
-                    outputFormat: selectedFormat
+                    outputFormat: selectedFormat,
+                    algorithmOptions: submittedOptions
                 ) { [weak self] progress in
                     self?.status = .uploading(progress)
                 }
 
                 let job = ResumableStemJob(
-                    jobHash: hash,
+                    jobHash: created.hash,
+                    resultURL: created.resultURL,
                     sourcePath: source.path,
                     folderPath: folder.path,
                     sourceName: sourceName,
                     algorithm: algorithm,
                     outputFormat: selectedFormat,
+                    algorithmOptions: submittedOptions,
                     startedAt: startedAt,
                     sourceFingerprint: sourceFingerprint,
                     separationKey: separationKey,
@@ -226,7 +313,7 @@ final class StemPrepStore: ObservableObject {
         saveResumableJob(job)
         hydrate(job)
         runStartedAt = job.startedAt
-        status = .queued("Reconnecting to MVSEP")
+        status = .queued(MvsepRemoteProgress(stage: .reconnecting))
 
         startTrackedTask { [weak self] in
             guard let self else { return }
@@ -256,6 +343,39 @@ final class StemPrepStore: ObservableObject {
         }
     }
 
+    func cancelRemoteJob() {
+        guard canCancelRemoteJob, let job = resumableJob else { return }
+        let token = apiToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            remoteActionError = StemPrepError.missingToken.localizedDescription
+            return
+        }
+
+        isCancellingRemoteJob = true
+        remoteActionError = nil
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await mvsep.cancelSeparation(
+                    jobHash: job.jobHash,
+                    apiToken: token,
+                    resultURL: job.resultURL
+                )
+                activeTask?.cancel()
+                activeTask = nil
+                activeTaskID = nil
+                clearResumableJob()
+                runStartedAt = nil
+                status = selectedFile.map(StemJobStatus.ready) ?? .idle
+                isCancellingRemoteJob = false
+                refreshMVSEPData()
+            } catch {
+                isCancellingRemoteJob = false
+                remoteActionError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+
     func forgetPausedJob() {
         guard activeTask == nil, resumableJob != nil else { return }
         clearResumableJob()
@@ -281,6 +401,23 @@ final class StemPrepStore: ObservableObject {
         }
     }
 
+    func chooseDestinationForRemoteHistory(_ item: MvsepHistoryItem) {
+        guard item.jobExists, activeTask == nil else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose where to save the recovered stems"
+        panel.prompt = "Save here"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.begin { [weak self] response in
+            guard response == .OK, let destination = panel.url else { return }
+            Task { @MainActor in
+                self?.downloadRemoteHistory(item, to: destination)
+            }
+        }
+    }
+
     func revealOutputFolder() {
         guard case .complete(let url) = status else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -298,6 +435,60 @@ final class StemPrepStore: ObservableObject {
         NSWorkspace.shared.open(stem.url)
     }
 
+    private func downloadRemoteHistory(_ item: MvsepHistoryItem, to parent: URL) {
+        guard activeTask == nil else { return }
+        completedStems = []
+        runStartedAt = Date()
+        status = .processing(MvsepRemoteProgress(
+            stage: .reconnecting,
+            message: "Retrieving this saved render from MVSEP."
+        ))
+
+        startTrackedTask { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await mvsep.pollResult(jobHash: item.hash) { [weak self] nextStatus in
+                    self?.status = nextStatus
+                }
+                guard !result.files.isEmpty else {
+                    throw StemPrepError.remoteJobEnded("MVSEP returned no downloadable files for this render.")
+                }
+
+                let sourceName = FileNaming.sanitizedComponent(item.displayTitle, fallback: "Recovered MVSEP Render")
+                let folder = try outputStore.prepareRemoteFolder(in: parent, named: sourceName)
+                status = .downloading(0, result.files.count)
+                let stems = try await mvsep.download(
+                    remoteFiles: result.files,
+                    to: folder,
+                    sourceName: sourceName,
+                    maxConcurrent: 3
+                ) { [weak self] completed, total in
+                    self?.status = .downloading(completed, total)
+                }
+                try outputStore.writeRemoteManifest(
+                    to: folder,
+                    jobHash: item.hash,
+                    historyItem: item,
+                    serverMetadata: result.metadata,
+                    stems: stems
+                )
+                completedStems = stems
+                status = .complete(folder)
+                runStartedAt = nil
+                recordRecoveredRemoteJob(
+                    item: item,
+                    folder: folder,
+                    stems: stems,
+                    metadata: result.metadata
+                )
+                CompletionNotifier.notify(folder: folder, stemCount: stems.count)
+                refreshMVSEPData()
+            } catch {
+                handleJobError(error)
+            }
+        }
+    }
+
     private func startTrackedTask(operation: @escaping @MainActor () async -> Void) {
         let taskID = UUID()
         activeTaskID = taskID
@@ -310,14 +501,17 @@ final class StemPrepStore: ObservableObject {
     }
 
     private func finish(_ job: ResumableStemJob) async throws {
-        let files = try await mvsep.pollResult(jobHash: job.jobHash) { [weak self] nextStatus in
+        let result = try await mvsep.pollResult(
+            jobHash: job.jobHash,
+            resultURL: job.resultURL
+        ) { [weak self] nextStatus in
             self?.status = nextStatus
         }
         try Task.checkCancellation()
 
-        status = .downloading(0, files.count)
+        status = .downloading(0, result.files.count)
         let stems = try await mvsep.download(
-            remoteFiles: files,
+            remoteFiles: result.files,
             to: job.folderURL,
             sourceName: job.sourceName,
             maxConcurrent: 3
@@ -336,7 +530,10 @@ final class StemPrepStore: ObservableObject {
                 AudioFingerprint.separationKey(
                     sourceFingerprint: $0,
                     renderID: job.algorithm.renderID,
-                    outputFormat: job.outputFormat
+                    outputFormat: job.outputFormat,
+                    algorithmOptions: (job.algorithmOptions ?? job.algorithm.defaults) == job.algorithm.defaults
+                        ? [:]
+                        : (job.algorithmOptions ?? [:])
                 )
             }
 
@@ -348,7 +545,9 @@ final class StemPrepStore: ObservableObject {
             outputFormat: job.outputFormat,
             sourceFingerprint: sourceFingerprint,
             separationKey: separationKey,
-            stems: stems
+            stems: stems,
+            algorithmOptions: job.algorithmOptions ?? job.algorithm.defaults,
+            serverMetadata: result.metadata
         )
         completedStems = stems
         status = .complete(job.folderURL)
@@ -361,10 +560,12 @@ final class StemPrepStore: ObservableObject {
             sourceFingerprint: sourceFingerprint,
             separationKey: separationKey,
             stems: stems,
-            jobHash: job.jobHash
+            jobHash: job.jobHash,
+            serverMetadata: result.metadata
         )
         clearResumableJob()
         CompletionNotifier.notify(folder: job.folderURL, stemCount: stems.count)
+        refreshMVSEPData()
     }
 
     private func handleJobError(_ error: Error) {
@@ -392,6 +593,7 @@ final class StemPrepStore: ObservableObject {
         selectedFileInfo = makeFileInfo(for: job.sourceURL, duration: nil)
         selectedRenderID = job.algorithm.renderID
         outputFormat = job.outputFormat
+        algorithmOptions = job.algorithmOptions ?? job.algorithm.defaults
         completedStems = []
         loadDuration(for: job.sourceURL)
     }
@@ -422,7 +624,8 @@ final class StemPrepStore: ObservableObject {
         sourceFingerprint: String?,
         separationKey: String?,
         stems: [CompletedStem],
-        jobHash: String
+        jobHash: String,
+        serverMetadata: MvsepCompletionMetadata?
     ) {
         let record = CompletedJobRecord(
             id: separationKey ?? AudioFingerprint.stableIdentifier(for: jobHash),
@@ -434,6 +637,8 @@ final class StemPrepStore: ObservableObject {
             detail: "\(algorithm.groupName) - \(stems.count) file\(stems.count == 1 ? "" : "s")",
             renderID: algorithm.renderID,
             outputFormat: outputFormat,
+            jobHash: jobHash,
+            serverMetadata: serverMetadata,
             stems: stems.map { PersistedStem(name: $0.name, path: $0.url.path) },
             completedAt: Date()
         )
@@ -442,6 +647,51 @@ final class StemPrepStore: ObservableObject {
         completedJobRecords = Array(completedJobRecords.prefix(100))
         recentJobs = Array(completedJobRecords.prefix(8)).map(\.recentJob)
         try? historyStore.save(completedJobRecords)
+    }
+
+    private func recordRecoveredRemoteJob(
+        item: MvsepHistoryItem,
+        folder: URL,
+        stems: [CompletedStem],
+        metadata: MvsepCompletionMetadata
+    ) {
+        let record = CompletedJobRecord(
+            id: AudioFingerprint.stableIdentifier(for: item.hash),
+            separationKey: nil,
+            sourceFingerprint: nil,
+            sourcePath: "",
+            folderPath: folder.path,
+            title: item.displayTitle,
+            detail: "MVSEP history - \(stems.count) file\(stems.count == 1 ? "" : "s")",
+            renderID: item.algorithm?.renderID,
+            outputFormat: nil,
+            jobHash: item.hash,
+            serverMetadata: metadata,
+            stems: stems.map { PersistedStem(name: $0.name, path: $0.url.path) },
+            completedAt: Date()
+        )
+        completedJobRecords.removeAll { $0.id == record.id }
+        completedJobRecords.insert(record, at: 0)
+        completedJobRecords = Array(completedJobRecords.prefix(100))
+        recentJobs = Array(completedJobRecords.prefix(8)).map(\.recentJob)
+        try? historyStore.save(completedJobRecords)
+    }
+
+    private func synchronizeAlgorithmOptions() {
+        let algorithm = selectedAlgorithm
+        let saved = UserDefaults.standard.dictionary(
+            forKey: "mvsepAlgorithmOptions.\(algorithm.renderID)"
+        ) as? [String: String]
+        var values = algorithm.defaults
+        for field in algorithm.configurableFields {
+            if let savedValue = saved?[field.name],
+               field.choices.contains(where: { $0.key == savedValue }) {
+                values[field.name] = savedValue
+            } else if let defaultValue = field.defaultValue {
+                values[field.name] = defaultValue
+            }
+        }
+        algorithmOptions = values
     }
 
     private func loadDuration(for url: URL) {
@@ -454,11 +704,19 @@ final class StemPrepStore: ObservableObject {
 
             let seconds = CMTimeGetSeconds(duration)
             guard seconds.isFinite && seconds > 0 else { return }
-            selectedFileInfo = makeFileInfo(for: url, duration: Self.formatDuration(seconds))
+            selectedFileInfo = makeFileInfo(
+                for: url,
+                duration: Self.formatDuration(seconds),
+                durationSeconds: seconds
+            )
         }
     }
 
-    private func makeFileInfo(for url: URL, duration: String?) -> AudioFileInfo {
+    private func makeFileInfo(
+        for url: URL,
+        duration: String?,
+        durationSeconds: Double? = nil
+    ) -> AudioFileInfo {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey])
         let fileSize = values?.fileSize.map { size in
             ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
@@ -468,7 +726,8 @@ final class StemPrepStore: ObservableObject {
             name: url.lastPathComponent,
             folder: url.deletingLastPathComponent().path,
             fileSize: fileSize,
-            duration: duration
+            duration: duration,
+            durationSeconds: durationSeconds
         )
     }
 

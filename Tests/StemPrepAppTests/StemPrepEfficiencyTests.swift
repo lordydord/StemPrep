@@ -19,6 +19,16 @@ final class StemPrepEfficiencyTests: XCTestCase {
             AudioFingerprint.separationKey(sourceFingerprint: first, renderID: 28, outputFormat: .wav16),
             AudioFingerprint.separationKey(sourceFingerprint: first, renderID: 28, outputFormat: .flac24)
         )
+        XCTAssertNotEqual(
+            AudioFingerprint.separationKey(sourceFingerprint: first, renderID: 28, outputFormat: .wav16),
+            AudioFingerprint.separationKey(
+                sourceFingerprint: first,
+                renderID: 28,
+                outputFormat: .wav16,
+                algorithmOptions: ["add_opt2": "12"]
+            )
+        )
+        XCTAssertEqual(MvsepAlgorithm.fallback.estimatedCredits(for: 351), 11)
     }
 
     func testRecoveryRecordRoundTripsPausedState() throws {
@@ -28,11 +38,13 @@ final class StemPrepEfficiencyTests: XCTestCase {
         let store = StemJobRecoveryStore(defaults: defaults)
         let job = ResumableStemJob(
             jobHash: "job-123",
+            resultURL: URL(string: "https://de.mvsep.com/api/separation/get"),
             sourcePath: "/tmp/source.wav",
             folderPath: "/tmp/source Stems",
             sourceName: "source",
             algorithm: .fallback,
             outputFormat: .wav16,
+            algorithmOptions: MvsepAlgorithm.fallback.defaults,
             startedAt: Date(timeIntervalSince1970: 1_720_000_000),
             sourceFingerprint: "fingerprint",
             separationKey: "key",
@@ -105,7 +117,7 @@ final class StemPrepEfficiencyTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), contents)
     }
 
-    func testMultipartBodyStreamsFileWithoutCreatingPackage() throws {
+    func testMultipartBodyStagesFileWithoutLoadingPackageInMemory() throws {
         let file = FileManager.default.temporaryDirectory
             .appendingPathComponent("StemPrepStreamTest-\(UUID().uuidString).wav")
         try Data("AUDIO-PAYLOAD".utf8).write(to: file)
@@ -118,7 +130,9 @@ final class StemPrepEfficiencyTests: XCTestCase {
             fields: [("sep_type", "28"), ("output_format", "1")]
         )
 
-        let body = try readAll(from: descriptor.makeInputStream())
+        let stagedFile = try descriptor.makeTemporaryUploadFile()
+        defer { try? FileManager.default.removeItem(at: stagedFile) }
+        let body = try Data(contentsOf: stagedFile)
         let text = try XCTUnwrap(String(data: body, encoding: .utf8))
         XCTAssertEqual(Int64(body.count), descriptor.contentLength)
         XCTAssertTrue(text.contains("AUDIO-PAYLOAD"))
@@ -128,8 +142,9 @@ final class StemPrepEfficiencyTests: XCTestCase {
     }
 
     @MainActor
-    func testStreamedUploadReturnsJobHash() async throws {
+    func testFileBackedUploadReturnsJobHash() async throws {
         MockUploadURLProtocol.reset()
+        let stagingFilesBefore = temporaryUploadFiles()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockUploadURLProtocol.self]
         let client = MvsepClient(session: URLSession(configuration: configuration))
@@ -138,16 +153,49 @@ final class StemPrepEfficiencyTests: XCTestCase {
         try Data("STREAMED-AUDIO".utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
 
-        let hash = try await client.createSeparation(
+        let created = try await client.createSeparation(
             audioURL: file,
             apiToken: "test-token",
             algorithm: .fallback,
             outputFormat: .wav16
         ) { _ in }
 
-        XCTAssertEqual(hash, "streamed-job")
+        XCTAssertEqual(created.hash, "streamed-job")
         XCTAssertTrue(MockUploadURLProtocol.capturedBody.contains(Data("STREAMED-AUDIO".utf8)))
         XCTAssertTrue(MockUploadURLProtocol.capturedBody.contains(Data("test-token".utf8)))
+        XCTAssertEqual(temporaryUploadFiles(), stagingFilesBefore)
+    }
+
+    @MainActor
+    func testLiveFileBackedUploadTransportWhenExplicitlyEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["STEMPREP_LIVE_UPLOAD_SMOKE"] == "1" else {
+            throw XCTSkip("Set STEMPREP_LIVE_UPLOAD_SMOKE=1 to exercise the real MVSEP HTTPS upload transport.")
+        }
+
+        let stagingFilesBefore = temporaryUploadFiles()
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StemPrepLiveUpload-\(UUID().uuidString).wav")
+        try Data(repeating: 0, count: 1024).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        do {
+            _ = try await MvsepClient().createSeparation(
+                audioURL: file,
+                apiToken: "StemPrep-invalid-transport-smoke-\(UUID().uuidString)",
+                algorithm: .fallback,
+                outputFormat: .wav16
+            ) { _ in }
+            XCTFail("MVSEP unexpectedly accepted the intentionally invalid smoke-test token.")
+        } catch {
+            switch error as? StemPrepError {
+            case .mvsepRejected:
+                break
+            default:
+                XCTFail("Expected an MVSEP rejection after the HTTPS upload, received: \(error)")
+            }
+        }
+
+        XCTAssertEqual(temporaryUploadFiles(), stagingFilesBefore)
     }
 
     @MainActor
@@ -163,10 +211,67 @@ final class StemPrepEfficiencyTests: XCTestCase {
             pollingPolicy: .immediateTests
         )
 
-        let files = try await client.pollResult(jobHash: "retry-job") { _ in }
+        let result = try await client.pollResult(jobHash: "retry-job") { _ in }
 
-        XCTAssertTrue(files.isEmpty)
+        XCTAssertTrue(result.files.isEmpty)
         XCTAssertEqual(PollRetryURLProtocol.requestCount, 2)
+    }
+
+    @MainActor
+    func testPollingReportsQueueAndChunkProgressAndCompletionMetadata() async throws {
+        MVSEPFeaturesURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MVSEPFeaturesURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let client = MvsepClient(
+            session: session,
+            downloadTransport: URLSessionDownloadTransport(session: session),
+            networkAvailability: AlwaysOnlineNetwork(),
+            pollingPolicy: .immediateTests
+        )
+        var statuses: [StemJobStatus] = []
+
+        let result = try await client.pollResult(jobHash: "feature-job") { status in
+            statuses.append(status)
+        }
+
+        XCTAssertEqual(
+            statuses.first,
+            .queued(MvsepRemoteProgress(stage: .waiting, queueCount: 7, currentOrder: 3))
+        )
+        XCTAssertEqual(
+            statuses.dropFirst().first,
+            .processing(MvsepRemoteProgress(stage: .distributing, finishedChunks: 2, allChunks: 4))
+        )
+        XCTAssertEqual(statuses.dropFirst().first?.progress, 0.5)
+        XCTAssertEqual(result.files.first?.download, "vocals.wav")
+        XCTAssertEqual(result.metadata.algorithmName, "MelBand Roformer")
+        XCTAssertEqual(result.metadata.outputFormat, "WAV")
+        XCTAssertEqual(result.metadata.inputFilename, "Track.wav")
+    }
+
+    @MainActor
+    func testAccountHistoryAndRemoteCancellation() async throws {
+        MVSEPFeaturesURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MVSEPFeaturesURLProtocol.self]
+        let client = MvsepClient(session: URLSession(configuration: configuration))
+
+        let account = try await client.fetchAccount(apiToken: "private-token")
+        XCTAssertEqual(account.premiumMinutes, 42.5)
+        XCTAssertTrue(account.premiumEnabled)
+        XCTAssertTrue(account.longFilenamesEnabled)
+        XCTAssertEqual(account.activeSeparations, 2)
+
+        let history = try await client.fetchSeparationHistory(apiToken: "private-token")
+        XCTAssertEqual(history.first?.hash, "20260713-120000-abc-Track.wav")
+        XCTAssertEqual(history.first?.credits, 6)
+        XCTAssertTrue(history.first?.jobExists == true)
+
+        try await client.cancelSeparation(jobHash: "queued-job", apiToken: "private-token")
+        let body = try XCTUnwrap(String(data: MVSEPFeaturesURLProtocol.capturedCancelBody, encoding: .utf8))
+        XCTAssertTrue(body.contains("hash=queued-job"))
+        XCTAssertTrue(body.contains("api_token=private-token"))
     }
 
     @MainActor
@@ -212,6 +317,14 @@ final class StemPrepEfficiencyTests: XCTestCase {
         )
         XCTAssertEqual(visibleFiles.count, 5)
     }
+}
+
+private func temporaryUploadFiles() -> Set<String> {
+    let names = (try? FileManager.default.contentsOfDirectory(
+        at: FileManager.default.temporaryDirectory,
+        includingPropertiesForKeys: nil
+    )) ?? []
+    return Set(names.map(\.lastPathComponent).filter { $0.hasPrefix("StemPrepUpload-") })
 }
 
 private func readAll(from stream: InputStream) throws -> Data {
@@ -315,6 +428,77 @@ private final class PollRetryURLProtocol: URLProtocol {
             : Data("{\"success\":true,\"status\":\"done\",\"data\":{\"files\":[]}}".utf8)
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() { }
+}
+
+private final class MVSEPFeaturesURLProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var pollRequests = 0
+    private static var cancelBody = Data()
+
+    static var capturedCancelBody: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelBody
+    }
+
+    static func reset() {
+        lock.lock()
+        pollRequests = 0
+        cancelBody = Data()
+        lock.unlock()
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "mvsep.com"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let path = request.url?.path ?? ""
+        let payload: String
+
+        switch path {
+        case "/api/app/user":
+            payload = #"{"success":true,"data":{"premium_minutes":"42.5","premium_enabled":1,"long_filenames_enabled":true,"current_queue":[{"hash":"one"},{"hash":"two"}],"name":"Never expose me","email":"private@example.com","api_token":"private-token"}}"#
+        case "/api/app/separation_history":
+            payload = #"{"success":true,"data":[{"hash":"20260713-120000-abc-Track.wav","created_at":"2026-07-13 12:00:00","job_exists":true,"credits":6,"time_left":3600,"algorithm":{"name":"MelBand Roformer","render_id":40,"algorithm_group":{"name":"Roformer"}}}]}"#
+        case "/api/separation/cancel":
+            let body = request.httpBody
+                ?? request.httpBodyStream.flatMap { try? readAll(from: $0) }
+                ?? Data()
+            Self.lock.lock()
+            Self.cancelBody = body
+            Self.lock.unlock()
+            payload = #"{"success":true,"data":{"message":"Cancelled"}}"#
+        case "/api/separation/get":
+            Self.lock.lock()
+            Self.pollRequests += 1
+            let attempt = Self.pollRequests
+            Self.lock.unlock()
+            if attempt == 1 {
+                payload = #"{"success":true,"status":"waiting","data":{"queue_count":7,"current_order":3}}"#
+            } else if attempt == 2 {
+                payload = #"{"success":true,"status":"distributing","data":{"finished_chunks":2,"all_chunks":4}}"#
+            } else {
+                payload = #"{"success":true,"status":"done","data":{"files":[{"url":"https://mvsep.com/files/vocals.wav","download":"vocals.wav"}],"algorithm":{"name":"MelBand Roformer"},"output_format":"WAV","input_file":{"name":"Track.wav"},"date":"2026-07-13 12:01:00"}}"#
+            }
+        default:
+            payload = #"{"success":false,"data":{"message":"Unexpected test route"}}"#
+        }
+
+        let response = HTTPURLResponse(
+            url: request.url!,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        )!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(payload.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
 

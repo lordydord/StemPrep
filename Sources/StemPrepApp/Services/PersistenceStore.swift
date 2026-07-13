@@ -2,11 +2,13 @@ import Foundation
 
 struct ResumableStemJob: Codable, Equatable {
     let jobHash: String
+    let resultURL: URL?
     let sourcePath: String
     let folderPath: String
     let sourceName: String
     let algorithm: MvsepAlgorithm
     let outputFormat: MvsepOutputFormat
+    let algorithmOptions: [String: String]?
     let startedAt: Date
     let sourceFingerprint: String?
     let separationKey: String?
@@ -40,6 +42,8 @@ struct CompletedJobRecord: Codable, Equatable, Identifiable {
     let detail: String
     let renderID: Int?
     let outputFormat: MvsepOutputFormat?
+    let jobHash: String?
+    let serverMetadata: MvsepCompletionMetadata?
     let stems: [PersistedStem]
     let completedAt: Date
 
@@ -224,6 +228,8 @@ struct CompletedJobHistoryStore {
             detail: "\(group) - \(name)",
             renderID: renderID,
             outputFormat: format,
+            jobHash: payload["job_hash"] as? String,
+            serverMetadata: nil,
             stems: stems,
             completedAt: date
         )

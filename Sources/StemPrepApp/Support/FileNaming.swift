@@ -3,11 +3,15 @@ import Foundation
 enum FileNaming {
     static func safeTrackName(from url: URL) -> String {
         let base = url.deletingPathExtension().lastPathComponent
+        return sanitizedComponent(base, fallback: "Track")
+    }
+
+    static func sanitizedComponent(_ text: String, fallback: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_."))
-        let scalars = base.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " }
+        let scalars = text.unicodeScalars.map { allowed.contains($0) ? Character($0) : " " }
         let collapsed = String(scalars).split(separator: " ").joined(separator: " ")
         let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: " ."))
-        return trimmed.isEmpty ? "Track" : trimmed
+        return trimmed.isEmpty ? fallback : trimmed
     }
 
     static func uniqueFolder(in parent: URL, named name: String) throws -> URL {

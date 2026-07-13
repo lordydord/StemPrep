@@ -97,6 +97,23 @@ struct SettingsView: View {
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(SettingsPalette.muted)
                 }
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        SettingsLabel(number: "03", title: "MVSEP ACCOUNT")
+                        Spacer()
+                        Button {
+                            store.refreshMVSEPData()
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 10, weight: .semibold))
+                        .disabled(store.apiToken.isEmpty)
+                    }
+
+                    accountPanel
+                }
             }
             .padding(24)
         }
@@ -107,6 +124,7 @@ struct SettingsView: View {
         .onAppear {
             store.refreshPreferences()
             apiToken = store.apiToken
+            store.refreshMVSEPData()
         }
         .onChange(of: outputFormatRaw) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "mvsepOutputFormat")
@@ -116,6 +134,68 @@ struct SettingsView: View {
 
     private var selectedFormatDetail: String {
         MvsepOutputFormat(rawValue: outputFormatRaw)?.technicalDetail ?? MvsepOutputFormat.wav16.technicalDetail
+    }
+
+    @ViewBuilder
+    private var accountPanel: some View {
+        switch store.accountState {
+        case .notConfigured:
+            accountMessage(icon: "key", title: "Not connected", detail: "Save an API token to check your MVSEP account.")
+        case .checking:
+            accountMessage(icon: "arrow.triangle.2.circlepath", title: "Checking account", detail: "Requesting the latest account status from MVSEP…")
+        case let .invalid(message):
+            accountMessage(icon: "exclamationmark.triangle", title: "Token needs attention", detail: message)
+        case let .unavailable(message):
+            accountMessage(icon: "wifi.exclamationmark", title: "Account unavailable", detail: message)
+        case let .connected(account):
+            HStack(spacing: 8) {
+                accountMetric(value: formattedBalance(account.premiumMinutes), label: "PREMIUM BALANCE")
+                accountMetric(value: account.premiumEnabled ? "ON" : "OFF", label: "PREMIUM USE")
+                accountMetric(value: String(account.activeSeparations), label: "ACTIVE JOBS")
+                accountMetric(value: account.longFilenamesEnabled ? "ON" : "OFF", label: "LONG NAMES")
+            }
+        }
+    }
+
+    private func accountMessage(icon: String, title: String, detail: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(SettingsPalette.accent)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(SettingsPalette.muted)
+            }
+            Spacer()
+        }
+        .padding(11)
+        .background(SettingsPalette.field, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    private func accountMetric(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(SettingsPalette.text)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(label)
+                .font(.system(size: 7, weight: .bold, design: .monospaced))
+                .tracking(0.7)
+                .foregroundStyle(SettingsPalette.muted)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(SettingsPalette.field, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func formattedBalance(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(value.rounded() == value ? 0 : 1)))
     }
 
     private func saveToken() {

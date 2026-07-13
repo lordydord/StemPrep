@@ -47,8 +47,12 @@ struct ContentView: View {
         .onAppear {
             store.refreshPreferences()
             store.loadAlgorithms()
+            store.refreshMVSEPData()
             store.recoverInterruptedJobIfNeeded()
             showsOnboarding = !hasCompletedOnboarding
+        }
+        .onChange(of: store.selectedRenderID) { _, _ in
+            store.modelSelectionDidChange()
         }
         .sheet(isPresented: $showsOnboarding) {
             OnboardingView {
@@ -335,7 +339,7 @@ private struct SourceDeck: View {
                 Text(sourceBadge)
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .tracking(1)
-                    .foregroundStyle(store.selectedFile == nil ? StudioPalette.subtle : StudioPalette.accent)
+                    .foregroundStyle(deckAccent)
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 17)
@@ -344,75 +348,96 @@ private struct SourceDeck: View {
                 .fill(StudioPalette.line)
                 .frame(height: 1)
 
-            VStack(spacing: 24) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .fill(isTargeted ? StudioPalette.accent.opacity(0.10) : StudioPalette.deck)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 17, style: .continuous)
-                                .strokeBorder(
-                                    isTargeted ? StudioPalette.accent : StudioPalette.lineStrong,
-                                    style: StrokeStyle(lineWidth: isTargeted ? 1.5 : 1, dash: isTargeted ? [] : [7, 7])
-                                )
+            ZStack {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .fill(isTargeted ? StudioPalette.accent.opacity(0.10) : StudioPalette.deck)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 17, style: .continuous)
+                            .strokeBorder(
+                                isTargeted ? StudioPalette.accent : StudioPalette.lineStrong,
+                                style: StrokeStyle(lineWidth: isTargeted ? 1.5 : 1, dash: isTargeted ? [] : [7, 7])
+                            )
+                    }
+
+                VStack(spacing: 18) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(deckAccent.opacity(0.14))
+                            Image(systemName: deckIcon)
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(deckAccent)
+                        }
+                        .frame(width: 52, height: 52)
+
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(deckTitle)
+                                .font(.system(size: 22, weight: .bold, design: .rounded))
+                                .tracking(-0.4)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(deckSubtitle)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(StudioPalette.muted)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
 
-                    VStack(spacing: 20) {
-                        HStack(spacing: 12) {
-                            ZStack {
-                                Circle()
-                                    .fill(StudioPalette.accent.opacity(0.14))
-                                Image(systemName: store.selectedFile == nil ? "waveform.badge.plus" : "waveform")
-                                    .font(.system(size: 22, weight: .semibold))
-                                    .foregroundStyle(StudioPalette.accent)
+                        Spacer()
+
+                        if store.status.isRunning {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text(elapsedText(now: context.date))
+                                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                    .foregroundStyle(StudioPalette.success)
+                                    .padding(.horizontal, 12)
+                                    .frame(height: 34)
+                                    .background(StudioPalette.success.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
                             }
-                            .frame(width: 52, height: 52)
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(sourceTitle)
-                                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                                    .tracking(-0.4)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Text(sourceSubtitle)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(StudioPalette.muted)
-                                    .lineLimit(2)
-                            }
-
-                            Spacer()
-
+                        } else {
                             Button(store.selectedFile == nil ? "Browse" : "Replace") {
                                 store.chooseFile()
                             }
                             .buttonStyle(SecondaryActionButtonStyle())
-                            .disabled(store.status.isRunning || store.hasResumableJob)
-                        }
-
-                        SignalWaveform(isActive: store.selectedFile != nil || store.status.isRunning)
-                            .frame(height: 112)
-
-                        HStack(spacing: 10) {
-                            if let info = store.selectedFileInfo {
-                                DeckMetadata(label: "SIZE", value: info.fileSize)
-                                DeckMetadata(label: "LENGTH", value: info.duration ?? "READING")
-                                DeckMetadata(label: "LOCATION", value: info.folder, expands: true)
-                            } else {
-                                DeckMetadata(label: "FORMAT", value: "WAV")
-                                DeckMetadata(label: "INPUT", value: "DRAG OR BROWSE")
-                                DeckMetadata(label: "OUTPUT", value: "BESIDE SOURCE", expands: true)
-                            }
+                            .disabled(store.hasResumableJob)
                         }
                     }
-                    .padding(24)
-                }
-                .scaleEffect(isHovering && !store.status.isRunning ? 1.004 : 1)
-                .animation(.easeOut(duration: 0.2), value: isHovering)
-                .onHover { isHovering = $0 }
-                .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted, perform: handleDrop)
 
-                RenderStatusBar()
+                    SignalWaveform(
+                        isActive: store.selectedFile != nil || store.status.isRunning,
+                        progress: store.status.progress,
+                        isIndeterminate: store.status.usesIndeterminateProgress,
+                        isComplete: isComplete
+                    )
+                    .frame(height: 112)
+
+                    HStack(spacing: 10) {
+                        if store.status.isRunning {
+                            DeckMetadata(label: "PHASE", value: store.status.phaseLabel)
+                            DeckMetadata(label: "PROGRESS", value: store.status.metric)
+                            DeckMetadata(
+                                label: "SOURCE",
+                                value: store.selectedFileInfo?.name ?? "MVSEP HISTORY",
+                                expands: true
+                            )
+                        } else if let info = store.selectedFileInfo {
+                            DeckMetadata(label: "SIZE", value: info.fileSize)
+                            DeckMetadata(label: "LENGTH", value: info.duration ?? "READING")
+                            DeckMetadata(label: "LOCATION", value: info.folder, expands: true)
+                        } else {
+                            DeckMetadata(label: "FORMAT", value: "WAV")
+                            DeckMetadata(label: "INPUT", value: "DRAG OR BROWSE")
+                            DeckMetadata(label: "OUTPUT", value: "BESIDE SOURCE", expands: true)
+                        }
+                    }
+                }
+                .padding(24)
             }
             .padding(20)
+            .scaleEffect(isHovering && !store.status.isRunning ? 1.004 : 1)
+            .animation(.easeOut(duration: 0.2), value: isHovering)
+            .onHover { isHovering = $0 }
+            .onDrop(of: [UTType.fileURL], isTargeted: $isTargeted, perform: handleDrop)
         }
         .background(StudioPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
@@ -422,11 +447,26 @@ private struct SourceDeck: View {
         .shadow(color: StudioPalette.shadow, radius: 28, y: 18)
     }
 
-    private var sourceTitle: String {
-        store.selectedFileInfo?.name ?? "Drop your master here"
+    private var deckTitle: String {
+        switch store.status {
+        case .checking, .preparing, .uploading, .queued, .processing, .downloading,
+             .paused, .complete, .failed:
+            return store.status.title
+        case .idle, .ready:
+            return store.selectedFileInfo?.name ?? "Drop your master here"
+        }
     }
 
-    private var sourceSubtitle: String {
+    private var deckSubtitle: String {
+        if store.status.isRunning {
+            return store.status.detail
+        }
+        switch store.status {
+        case .paused, .complete, .failed:
+            return store.status.detail
+        default:
+            break
+        }
         if store.selectedFile == nil {
             return isTargeted ? "Release to load this WAV" : "One clean WAV. We’ll handle the rest."
         }
@@ -434,7 +474,49 @@ private struct SourceDeck: View {
     }
 
     private var sourceBadge: String {
-        store.selectedFile == nil ? "NO SOURCE" : "SOURCE LOCKED"
+        if store.status.isRunning { return "LIVE · \(store.status.phaseLabel)" }
+        switch store.status {
+        case .complete: return "RENDER COMPLETE"
+        case .paused: return "TRACKING PAUSED"
+        case .failed: return "ACTION REQUIRED"
+        default: return store.selectedFile == nil ? "NO SOURCE" : "SOURCE LOCKED"
+        }
+    }
+
+    private var deckAccent: Color {
+        switch store.status {
+        case .complete: return StudioPalette.success
+        case .failed: return StudioPalette.danger
+        case .paused: return StudioPalette.signalAmber
+        case .checking, .preparing, .uploading, .queued, .processing, .downloading:
+            return StudioPalette.success
+        default: return store.selectedFile == nil ? StudioPalette.subtle : StudioPalette.accent
+        }
+    }
+
+    private var deckIcon: String {
+        switch store.status {
+        case .complete: return "checkmark"
+        case .failed: return "exclamationmark"
+        case .paused: return "pause.fill"
+        case .queued: return "clock"
+        case .checking, .preparing: return "magnifyingglass"
+        case .uploading: return "arrow.up"
+        case .processing: return "waveform.path.ecg"
+        case .downloading: return "arrow.down"
+        default: return store.selectedFile == nil ? "waveform.badge.plus" : "waveform"
+        }
+    }
+
+    private var isComplete: Bool {
+        if case .complete = store.status { return true }
+        return false
+    }
+
+    private func elapsedText(now: Date) -> String {
+        guard let start = store.runStartedAt else { return "00:00" }
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
@@ -480,15 +562,46 @@ private struct DeckMetadata: View {
 
 private struct SignalWaveform: View {
     let isActive: Bool
+    let progress: Double?
+    let isIndeterminate: Bool
+    let isComplete: Bool
 
     var body: some View {
         GeometryReader { proxy in
-            HStack(alignment: .center, spacing: 2.5) {
-                ForEach(0..<84, id: \.self) { index in
-                    Capsule()
-                        .fill(barColor(for: index))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: height(for: index, maximum: proxy.size.height))
+            ZStack(alignment: .leading) {
+                WaveformBars(
+                    color: isActive ? StudioPalette.accent : StudioPalette.subtle,
+                    opacity: isActive ? 0.84 : 0.20
+                )
+
+                if isComplete {
+                    WaveformBars(color: StudioPalette.success, opacity: 0.92)
+                } else if let progress {
+                    WaveformBars(color: StudioPalette.success, opacity: 0.92)
+                        .mask(alignment: .leading) {
+                            Rectangle()
+                                .frame(width: proxy.size.width * CGFloat(min(1, max(0, progress))))
+                        }
+                        .animation(.easeOut(duration: 0.3), value: progress)
+                } else if isIndeterminate {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                        let duration = 2.4
+                        let phase = context.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: duration) / duration
+                        let window = max(90, proxy.size.width * 0.24)
+                        let offset = CGFloat(phase) * (proxy.size.width + window) - window
+
+                        WaveformBars(color: StudioPalette.success, opacity: 0.94)
+                            .mask(alignment: .leading) {
+                                LinearGradient(
+                                    colors: [.clear, .white.opacity(0.95), .clear],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                .frame(width: window)
+                                .offset(x: offset)
+                            }
+                    }
                 }
             }
         }
@@ -496,6 +609,34 @@ private struct SignalWaveform: View {
             Rectangle()
                 .fill(Color.white.opacity(0.06))
                 .frame(height: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Render progress")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityValue: String {
+        if isComplete { return "Complete" }
+        if let progress { return "\(Int((progress * 100).rounded())) percent" }
+        if isIndeterminate { return "In progress" }
+        return isActive ? "Ready" : "No source"
+    }
+}
+
+private struct WaveformBars: View {
+    let color: Color
+    let opacity: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            HStack(alignment: .center, spacing: 2.5) {
+                ForEach(0..<84, id: \.self) { index in
+                    Capsule()
+                        .fill(color.opacity(opacity * emphasis(for: index)))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: height(for: index, maximum: proxy.size.height))
+                    }
+                }
         }
     }
 
@@ -506,100 +647,15 @@ private struct SignalWaveform: View {
         return max(8, CGFloat((0.18 + a * b * 0.82) * envelope) * maximum)
     }
 
-    private func barColor(for index: Int) -> Color {
-        guard isActive else { return StudioPalette.subtle.opacity(0.20) }
-        let emphasis = 0.42 + abs(sin(Double(index) * 0.11)) * 0.48
-        return StudioPalette.accent.opacity(emphasis)
-    }
-}
-
-private struct RenderStatusBar: View {
-    @EnvironmentObject private var store: StemPrepStore
-
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(statusColor.opacity(0.14))
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                        .shadow(color: statusColor.opacity(0.6), radius: 5)
-                }
-                .frame(width: 28, height: 28)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(store.status.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(statusDetail)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(StudioPalette.muted)
-                        .lineLimit(2)
-                }
-
-                Spacer()
-
-                if store.status.isRunning {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(elapsedText(now: context.date))
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundStyle(StudioPalette.accent)
-                    }
-                }
-            }
-
-            if store.status.isRunning {
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(StudioPalette.surfaceSoft)
-                        Capsule()
-                            .fill(StudioPalette.accent)
-                            .frame(width: proxy.size.width * CGFloat(store.status.progress ?? 0.34))
-                    }
-                }
-                .frame(height: 3)
-            }
-        }
-        .padding(.horizontal, 2)
-    }
-
-    private var statusDetail: String {
-        switch store.status {
-        case .idle: return "Choose a WAV to start a new separation."
-        case .ready: return "Source is loaded. Review the engine and render."
-        case .checking: return "Checking whether these exact stems already exist."
-        case .uploading: return "Sending the original WAV to MVSEP."
-        case .queued, .processing: return "The remote engine is separating your track."
-        case .downloading: return "Saving returned stems in parallel without duplicate raw copies."
-        case .paused(let message): return message
-        case .complete: return "All files are ready beside the source track."
-        case .failed(let message): return message
-        case .preparing: return "Creating the output folder beside the source."
-        }
-    }
-
-    private var statusColor: Color {
-        switch store.status {
-        case .complete: return StudioPalette.success
-        case .failed: return StudioPalette.danger
-        case .paused: return StudioPalette.signalAmber
-        case .idle, .ready: return StudioPalette.subtle
-        default: return StudioPalette.accent
-        }
-    }
-
-    private func elapsedText(now: Date) -> String {
-        guard let start = store.runStartedAt else { return "00:00" }
-        let seconds = max(0, Int(now.timeIntervalSince(start)))
-        return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
+    private func emphasis(for index: Int) -> Double {
+        0.52 + abs(sin(Double(index) * 0.11)) * 0.48
     }
 }
 
 private struct EngineRack: View {
     @EnvironmentObject private var store: StemPrepStore
+    @State private var showsAdvancedOptions = false
+    @State private var showsRemoteCancelConfirmation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -633,11 +689,58 @@ private struct EngineRack: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .disabled(store.status.isRunning || store.hasResumableJob)
 
-                    Text(store.selectedAlgorithm.displayName)
+                    Text(store.selectedAlgorithm.shortDescription ?? store.selectedAlgorithm.displayName)
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(StudioPalette.muted)
-                        .lineLimit(3)
+                        .lineLimit(4)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 8) {
+                        EngineTag(
+                            store.selectedAlgorithm.availabilityLabel,
+                            color: store.selectedAlgorithm.orientation == 2 ? StudioPalette.signalAmber : StudioPalette.subtle
+                        )
+                        if let credits = store.estimatedCredits {
+                            EngineTag("BASE EST. \(credits) CREDIT\(credits == 1 ? "" : "S")", color: StudioPalette.success)
+                        } else if let coefficient = store.selectedAlgorithm.priceCoefficient {
+                            EngineTag("\(coefficient.formatted())× CREDIT RATE", color: StudioPalette.subtle)
+                        }
+                    }
+
+                    if !store.selectedAlgorithm.configurableFields.isEmpty {
+                        DisclosureGroup(isExpanded: $showsAdvancedOptions) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(store.selectedAlgorithm.configurableFields, id: \.name) { field in
+                                    VStack(alignment: .leading, spacing: 5) {
+                                        Text(field.text.uppercased())
+                                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                            .tracking(0.8)
+                                            .foregroundStyle(StudioPalette.subtle)
+                                        Picker(
+                                            field.text,
+                                            selection: Binding(
+                                                get: { store.algorithmOptionValue(for: field) },
+                                                set: { store.setAlgorithmOption($0, for: field) }
+                                            )
+                                        ) {
+                                            ForEach(field.choices, id: \.key) { choice in
+                                                Text(choice.label).tag(choice.key)
+                                            }
+                                        }
+                                        .labelsHidden()
+                                        .pickerStyle(.menu)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                }
+                            }
+                            .padding(.top, 8)
+                        } label: {
+                            Text("Advanced options · \(store.selectedAlgorithm.configurableFields.count)")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(StudioPalette.muted)
+                        }
+                        .disabled(store.status.isRunning || store.hasResumableJob)
+                    }
                 }
 
                 Rectangle().fill(StudioPalette.line).frame(height: 1)
@@ -680,11 +783,20 @@ private struct EngineRack: View {
                     .keyboardShortcut(.return, modifiers: [.command])
 
                     if store.status.isRunning {
-                        Button("Stop tracking") {
+                        Button("Stop tracking locally") {
                             store.cancelCurrentJob()
                         }
                         .buttonStyle(SecondaryActionButtonStyle())
                         .frame(maxWidth: .infinity)
+
+                        if store.canCancelRemoteJob {
+                            Button(store.isCancellingRemoteJob ? "Cancelling MVSEP job…" : "Cancel MVSEP job and refund…") {
+                                showsRemoteCancelConfirmation = true
+                            }
+                            .buttonStyle(DestructiveActionButtonStyle())
+                            .disabled(store.isCancellingRemoteJob)
+                            .frame(maxWidth: .infinity)
+                        }
                     } else if store.hasResumableJob {
                         Button("Forget paused job") {
                             store.forgetPausedJob()
@@ -712,6 +824,29 @@ private struct EngineRack: View {
                 .stroke(StudioPalette.line, lineWidth: 1)
         }
         .shadow(color: StudioPalette.shadow, radius: 28, y: 18)
+        .confirmationDialog(
+            "Cancel this MVSEP job?",
+            isPresented: $showsRemoteCancelConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Cancel job and request refund", role: .destructive) {
+                store.cancelRemoteJob()
+            }
+            Button("Keep rendering", role: .cancel) { }
+        } message: {
+            Text("MVSEP can refund credits only while the job is still queued. Your local tracking record will be removed after MVSEP confirms the cancellation.")
+        }
+        .alert(
+            "MVSEP could not cancel the job",
+            isPresented: Binding(
+                get: { store.remoteActionError != nil },
+                set: { if !$0 { store.remoteActionError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { store.remoteActionError = nil }
+        } message: {
+            Text(store.remoteActionError ?? "Please try again.")
+        }
     }
 
     private var primaryTitle: String {
@@ -754,54 +889,171 @@ private struct RackLabel: View {
     }
 }
 
+private struct EngineTag: View {
+    let text: String
+    let color: Color
+
+    init(_ text: String, color: Color) {
+        self.text = text
+        self.color = color
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+            .tracking(0.7)
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(color.opacity(0.09), in: RoundedRectangle(cornerRadius: 5))
+    }
+}
+
 private struct RecentSessions: View {
     @EnvironmentObject private var store: StemPrepStore
+    @State private var source: RecentSessionSource = .local
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            RackLabel(number: "03", title: "RECENT SESSIONS")
-
-            if store.recentJobs.isEmpty {
-                HStack(spacing: 9) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(StudioPalette.subtle)
-                    Text("Finished renders appear here.")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(StudioPalette.muted)
+            HStack {
+                RackLabel(number: "03", title: "RECENT SESSIONS")
+                Spacer()
+                Button {
+                    store.refreshMVSEPData()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 24, height: 24)
                 }
-                .padding(.vertical, 3)
+                .buttonStyle(UtilityButtonStyle())
+                .help("Refresh MVSEP account and history")
+            }
+
+            Picker("History source", selection: $source) {
+                ForEach(RecentSessionSource.allCases) { option in
+                    Text(option.title).tag(option)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+
+            if source == .local {
+                localSessions
             } else {
-                ForEach(store.recentJobs.prefix(3)) { job in
-                    Button {
-                        store.reveal(folder: job.folder)
-                    } label: {
-                        HStack(spacing: 9) {
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(StudioPalette.accent.opacity(0.14))
-                                .frame(width: 28, height: 28)
-                                .overlay {
-                                    Image(systemName: "waveform")
-                                        .font(.system(size: 10, weight: .bold))
-                                        .foregroundStyle(StudioPalette.accent)
-                                }
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(job.title)
-                                    .font(.system(size: 11, weight: .semibold))
-                                    .lineLimit(1)
-                                Text("\(job.stemCount) files · \(job.completedAt, style: .time)")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(StudioPalette.subtle)
-                            }
-                            Spacer()
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
+                mvsepSessions
             }
         }
     }
+
+    @ViewBuilder
+    private var localSessions: some View {
+        if store.recentJobs.isEmpty {
+            emptyRow(icon: "clock.arrow.circlepath", text: "Finished local renders appear here.")
+        } else {
+            ForEach(store.recentJobs.prefix(3)) { job in
+                Button {
+                    store.reveal(folder: job.folder)
+                } label: {
+                    HStack(spacing: 9) {
+                        sessionIcon(color: StudioPalette.accent)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(job.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                            Text("\(job.stemCount) files · \(job.completedAt, style: .time)")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(StudioPalette.subtle)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var mvsepSessions: some View {
+        if store.remoteHistoryLoadStatus == "SYNCING" {
+            emptyRow(icon: "arrow.triangle.2.circlepath", text: "Syncing MVSEP history…")
+        } else if store.remoteHistory.isEmpty {
+            emptyRow(
+                icon: "externaldrive.badge.questionmark",
+                text: store.apiToken.isEmpty ? "Add an API token to view MVSEP history." : "No MVSEP history is available."
+            )
+        } else {
+            ForEach(store.remoteHistory.prefix(3)) { item in
+                HStack(spacing: 9) {
+                    sessionIcon(color: item.jobExists ? StudioPalette.success : StudioPalette.subtle)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.displayTitle)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                        Text(remoteDetail(item))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(StudioPalette.subtle)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+
+                    if item.jobExists {
+                        Button {
+                            store.chooseDestinationForRemoteHistory(item)
+                        } label: {
+                            Image(systemName: "arrow.down.to.line")
+                                .frame(width: 26, height: 26)
+                        }
+                        .buttonStyle(UtilityButtonStyle())
+                        .disabled(store.status.isRunning)
+                        .help("Download this MVSEP render")
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private func emptyRow(icon: String, text: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: icon)
+                .foregroundStyle(StudioPalette.subtle)
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(StudioPalette.muted)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func sessionIcon(color: Color) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(color.opacity(0.14))
+            .frame(width: 28, height: 28)
+            .overlay {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(color)
+            }
+    }
+
+    private func remoteDetail(_ item: MvsepHistoryItem) -> String {
+        let availability = item.jobExists ? "available" : "expired"
+        if let credits = item.credits {
+            return "\(credits) credit\(credits == 1 ? "" : "s") · \(availability)"
+        }
+        return availability
+    }
+}
+
+private enum RecentSessionSource: String, CaseIterable, Identifiable {
+    case local
+    case mvsep
+
+    var id: String { rawValue }
+    var title: String { self == .local ? "LOCAL" : "MVSEP" }
 }
 
 private struct OutputRack: View {
@@ -1012,6 +1264,26 @@ private struct SecondaryActionButtonStyle: ButtonStyle {
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(StudioPalette.lineStrong, lineWidth: 1)
+            }
+            .opacity(isEnabled ? 1 : 0.55)
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(.easeOut(duration: 0.16), value: configuration.isPressed)
+    }
+}
+
+private struct DestructiveActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(isEnabled ? StudioPalette.danger : StudioPalette.subtle)
+            .padding(.horizontal, 14)
+            .frame(height: 34)
+            .background(StudioPalette.danger.opacity(configuration.isPressed ? 0.16 : 0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(StudioPalette.danger.opacity(0.28), lineWidth: 1)
             }
             .opacity(isEnabled ? 1 : 0.55)
             .scaleEffect(configuration.isPressed ? 0.985 : 1)

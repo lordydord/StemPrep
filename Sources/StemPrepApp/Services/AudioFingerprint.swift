@@ -21,9 +21,14 @@ enum AudioFingerprint {
     static func separationKey(
         sourceFingerprint: String,
         renderID: Int,
-        outputFormat: MvsepOutputFormat
+        outputFormat: MvsepOutputFormat,
+        algorithmOptions: [String: String] = [:]
     ) -> String {
-        let identity = "\(sourceFingerprint)|\(renderID)|\(outputFormat.rawValue)"
+        let optionsIdentity = algorithmOptions.keys.sorted().map { key in
+            "\(key)=\(algorithmOptions[key] ?? "")"
+        }.joined(separator: "&")
+        let baseIdentity = "\(sourceFingerprint)|\(renderID)|\(outputFormat.rawValue)"
+        let identity = optionsIdentity.isEmpty ? baseIdentity : "\(baseIdentity)|\(optionsIdentity)"
         return SHA256.hash(data: Data(identity.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
