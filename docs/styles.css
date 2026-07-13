@@ -1,43 +1,4 @@
 :root {
-  color-scheme: light;
-  --bg: #eef0f1;
-  --surface: #f8f9f9;
-  --surface-strong: #ffffff;
-  --surface-tint: #e3e5e6;
-  --text: #111315;
-  --muted: #565d61;
-  --line: rgba(17, 19, 21, 0.14);
-  --line-strong: rgba(17, 19, 21, 0.24);
-  --accent: #e23f31;
-  --accent-strong: #c93226;
-  --accent-ink: #fff8f6;
-  --header: rgba(238, 240, 241, 0.86);
-  --shadow: rgba(35, 42, 46, 0.18);
-  --radius: 22px;
-  --button-radius: 14px;
-  --shell: min(1180px, calc(100vw - 48px));
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #111315;
-    --surface: #181b1d;
-    --surface-strong: #202427;
-    --surface-tint: #292d30;
-    --text: #f0f1ef;
-    --muted: #9da4a4;
-    --line: rgba(240, 241, 239, 0.11);
-    --line-strong: rgba(240, 241, 239, 0.22);
-    --accent: #ff5140;
-    --accent-strong: #ff6959;
-    --accent-ink: #160807;
-    --header: rgba(17, 19, 21, 0.84);
-    --shadow: rgba(0, 0, 0, 0.42);
-  }
-}
-
-:root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #111315;
   --surface: #181b1d;
@@ -52,6 +13,9 @@
   --accent-ink: #160807;
   --header: rgba(17, 19, 21, 0.84);
   --shadow: rgba(0, 0, 0, 0.42);
+  --radius: 22px;
+  --button-radius: 14px;
+  --shell: min(1180px, calc(100vw - 48px));
 }
 
 * {
@@ -161,19 +125,16 @@ a {
   white-space: nowrap;
 }
 
-.nav-links > a:not(.button),
-.theme-toggle {
+.nav-links > a:not(.button) {
   color: var(--muted);
   font-size: 13px;
   font-weight: 640;
 }
 
-.nav-links > a:not(.button):hover,
-.theme-toggle:hover {
+.nav-links > a:not(.button):hover {
   color: var(--text);
 }
 
-.theme-toggle,
 .menu-toggle {
   border: 0;
   padding: 0;
@@ -260,18 +221,6 @@ a {
   object-fit: cover;
   object-position: center;
   opacity: 0.78;
-}
-
-:root:not([data-theme="dark"]) .hero-art {
-  opacity: 0.34;
-  filter: grayscale(0.2) contrast(0.82) brightness(1.2);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .hero-art {
-    opacity: 0.78;
-    filter: none;
-  }
 }
 
 .hero-grid {
@@ -726,8 +675,7 @@ h1 {
     display: flex;
   }
 
-  .nav-links > a:not(.button),
-  .theme-toggle {
+  .nav-links > a:not(.button) {
     padding: 13px 2px;
     text-align: left;
   }

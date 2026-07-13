@@ -1,27 +1,5 @@
-const root = document.documentElement;
-const themeButton = document.querySelector('.theme-toggle');
 const menuButton = document.querySelector('.menu-toggle');
 const navLinks = document.querySelector('#nav-links');
-
-const preferredTheme = () => {
-  const saved = localStorage.getItem('stemprep-theme');
-  if (saved === 'light' || saved === 'dark') return saved;
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-};
-
-const applyTheme = (theme) => {
-  root.dataset.theme = theme;
-  themeButton.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
-  themeButton.setAttribute('aria-label', `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`);
-};
-
-applyTheme(preferredTheme());
-
-themeButton.addEventListener('click', () => {
-  const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
-  localStorage.setItem('stemprep-theme', next);
-  applyTheme(next);
-});
 
 menuButton.addEventListener('click', () => {
   const isOpen = navLinks.classList.toggle('is-open');
